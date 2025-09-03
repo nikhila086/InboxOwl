@@ -1,0 +1,60 @@
+// Prisma schema for InboxOwl
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id          Int       @id @default(autoincrement())
+  email       String    @unique
+  name        String?
+  accessToken String?
+  emails      Email[]
+  categories  Category[]
+  rules       Rule[]
+}
+
+model Email {
+  id          String     @id
+  subject     String
+  sender      String
+  snippet     String
+  labels      String
+  date        String
+  userId      Int
+  user        User       @relation(fields: [userId], references: [id])
+  categories  Category[] @relation("EmailCategories")
+}
+
+model Category {
+  id          Int       @id @default(autoincrement())
+  name        String
+  color       String    @default("#6366F1") // Default indigo color
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+  emails      Email[]   @relation("EmailCategories")
+  rules       Rule[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([name, userId]) // Prevent duplicate category names per user
+}
+
+model Rule {
+  id          Int       @id @default(autoincrement())
+  name        String
+  condition   String    // JSON string containing rule conditions
+  categoryId  Int
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+  category    Category  @relation(fields: [categoryId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([name, userId]) // Prevent duplicate rule names per user
+}
