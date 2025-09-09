@@ -1,11 +1,13 @@
-const API_BASE_URL = 'http://localhost:3000';
+const API_BASE_URL = 'http://localhost:3000/api';
 
 const defaultOptions = {
-  credentials: 'include',
+  credentials: 'include', // Include cookies for authentication
+  mode: 'cors', // Ensure CORS support
   headers: {
     'Accept': 'application/json',
     'Content-Type': 'application/json'
-  }
+  },
+  cache: 'no-cache' // Don't cache authentication requests
 };
 
 // Add timeout to fetch requests
@@ -74,7 +76,8 @@ export async function fetchUser() {
 export async function fetchEmails(maxResults = 10) { // Reduced default for better performance
   try {
     const response = await fetchWithTimeout(
-      `${API_BASE_URL}/gmail?maxResults=${maxResults}`, 
+      // Changed to match backend route
+      `${API_BASE_URL}/emails/messages?maxResults=${maxResults}`, 
       defaultOptions
     );
     return handleResponse(response);
@@ -86,7 +89,10 @@ export async function fetchEmails(maxResults = 10) { // Reduced default for bett
 
 export async function logout() {
   try {
-    const response = await fetchWithTimeout(`${API_BASE_URL}/logout`, defaultOptions);
+    const response = await fetchWithTimeout(`${API_BASE_URL}/auth/logout`, {
+      ...defaultOptions,
+      method: 'POST' // Explicitly use POST to match backend route
+    });
     return handleResponse(response);
   } catch (error) {
     console.error('Failed to logout:', error);
@@ -159,7 +165,7 @@ export async function deleteCategory(id) {
 }
 
 export async function addEmailsToCategory(categoryId, emailIds) {
-  const response = await fetch(`${API_BASE_URL}/categories/${categoryId}/emails`, {
+  const response = await fetch(`${API_BASE_URL}/api/categories/${categoryId}/emails`, {
     ...defaultOptions,
     method: 'POST',
     body: JSON.stringify({ emailIds })

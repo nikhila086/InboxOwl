@@ -1,4 +1,5 @@
 import React from 'react';
+import LogoutButton from './LogoutButton';
 
 function Navbar({ user, onLogout }) {
   return (
@@ -21,12 +22,7 @@ function Navbar({ user, onLogout }) {
                 />
                 <span className="text-gray-700">{user.name}</span>
               </div>
-              <button
-                onClick={onLogout}
-                className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors duration-200"
-              >
-                Sign Out
-              </button>
+              <LogoutButton onLogout={onLogout} />
             </div>
           ) : (
             <button

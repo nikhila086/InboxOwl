@@ -5,10 +5,10 @@ const ensureAuth = require('../middleware/ensureAuth');
 
 router.use(ensureAuth);
 
-router.post('/categories', categoryController.createCategory);
-router.get('/categories', categoryController.getCategories);
-router.put('/categories/:id', categoryController.updateCategory);
-router.delete('/categories/:id', categoryController.deleteCategory);
-router.post('/categories/:categoryId/emails', categoryController.addEmailsToCategory);
+router.post('/', categoryController.createCategory);
+router.get('/', categoryController.getCategories);
+router.put('/:id', categoryController.updateCategory);
+router.delete('/:id', categoryController.deleteCategory);
+router.post('/:categoryId/emails', categoryController.addEmailsToCategory);
 
 module.exports = router;

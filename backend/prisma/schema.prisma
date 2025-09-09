@@ -17,6 +17,7 @@ model User {
   emails      Email[]
   categories  Category[]
   rules       Rule[]
+  settings    UserSettings?
 }
 
 model Email {
@@ -24,11 +25,13 @@ model Email {
   subject     String
   sender      String
   snippet     String
+  content     String     @default("") // Add content field
   labels      String
   date        String
   userId      Int
   user        User       @relation(fields: [userId], references: [id])
   categories  Category[] @relation("EmailCategories")
+  analysis    EmailAnalysis?
 }
 
 model Category {
@@ -57,4 +60,26 @@ model Rule {
   updatedAt   DateTime  @updatedAt
 
   @@unique([name, userId]) // Prevent duplicate rule names per user
+}
+
+model EmailAnalysis {
+  id          Int       @id @default(autoincrement())
+  emailId     String    @unique
+  isSpam      Boolean   @default(false)
+  spamScore   Float     @default(0)
+  reasons     String[]  // Array of reasons why email might be spam
+  summary     String?   // Optional summary for long emails
+  email       Email     @relation(fields: [emailId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model UserSettings {
+  id            Int       @id @default(autoincrement())
+  userId        Int       @unique
+  user          User      @relation(fields: [userId], references: [id])
+  lastHistoryId String?   // Gmail history ID for incremental sync
+  lastSyncTime  DateTime? // When the last sync happened
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }

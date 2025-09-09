@@ -1,35 +1,50 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import EmailList from '../components/EmailList';
-import SettingsView from '../components/SettingsView';
+import EmailList from '../components/EmailList.jsx';
+import SettingsPanel from '../components/SettingsPanel';
 import { fetchUser, fetchEmails as fetchEmailsApi, logout } from '../utils/api';
+import { isAuthenticated, clearAuth } from '../utils/auth';
+import { FiSettings } from 'react-icons/fi';
 
 function Dashboard() {
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [emails, setEmails] = useState([]);
   const [loading, setLoading] = useState(false);
   const [emailsLoading, setEmailsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('emails');
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
-    const loadUser = async () => {
+    const checkAuthAndLoadUser = async () => {
       try {
         setLoading(true);
-        const data = await fetchUser();
-        if (data && data.length > 0) {
-          setUser(data[0]);
-          fetchEmails(); // Auto-fetch emails when user is loaded
+        const authenticated = await isAuthenticated();
+        
+        if (!authenticated) {
+          navigate('/login', { replace: true });
+          return;
+        }
+
+        // Load user data
+        const userData = await fetchUser();
+        if (userData) {
+          setUser(userData);
+          await fetchEmails();
+        } else {
+          navigate('/login', { replace: true });
         }
       } catch (error) {
-        console.error('Failed to load user:', error);
-        window.location.href = '/login';
+        console.error('Failed to check auth/load user:', error);
+        navigate('/login', { replace: true });
       } finally {
         setLoading(false);
       }
     };
-    loadUser();
-  }, []);
+    checkAuthAndLoadUser();
+  }, [navigate]);
 
   const fetchEmails = async () => {
     setEmailsLoading(true);
@@ -49,12 +64,21 @@ function Dashboard() {
 
   const handleLogout = async () => {
     try {
+      console.log('Logging out...');
+      // Use both logout functions to ensure we're fully logged out
       await logout();
+      await clearAuth();
+      
+      // Clear local state
       setUser(null);
       setEmails([]);
+      
+      // Force a complete page reload to clear any remaining state
       window.location.href = '/login';
     } catch (error) {
       console.error('Logout error:', error);
+      // Force logout even if API call fails
+      window.location.href = '/login';
     }
   };
 
@@ -143,13 +167,30 @@ function Dashboard() {
           transition={{ duration: 0.2 }}
         >
           {activeTab === 'emails' && (
-            <EmailList 
-              emails={emails} 
-              loading={emailsLoading} 
-              onRefresh={fetchEmails}
-            />
+            <>
+              <EmailList 
+                emails={emails} 
+                loading={emailsLoading} 
+                onRefresh={fetchEmails}
+              />
+              <div className="fixed bottom-6 right-6">
+                <button 
+                  onClick={() => setShowSettings(true)}
+                  className="bg-white p-3 rounded-full shadow-lg hover:shadow-xl transition-shadow"
+                  title="Settings"
+                >
+                  <FiSettings className="h-6 w-6 text-gray-600" />
+                </button>
+              </div>
+              
+              {showSettings && (
+                <div className="fixed inset-0 bg-gray-800 bg-opacity-30 flex justify-center items-center z-50 p-4">
+                  <SettingsPanel onClose={() => setShowSettings(false)} />
+                </div>
+              )}
+            </>
           )}
-          {activeTab === 'settings' && <SettingsView />}
+          {activeTab === 'settings' && <SettingsPanel onClose={() => setActiveTab('emails')} />}
         </motion.div>
       </div>
     </Layout>

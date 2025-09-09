@@ -11,16 +11,22 @@ function formatDate(dateString) {
   }).format(date);
 }
 
-function EmailCard({ email }) {
+function EmailCard({ email, onClick }) {
   const senderName = email?.sender || 'Unknown Sender';
   const firstLetter = senderName.charAt(0).toUpperCase();
   const labels = email?.labels ? email.labels.split(',').filter(Boolean) : [];
   const category = email?.category;
 
+  const hasSpamIndicators = email.analysis?.isSpam;
+  const spamScore = email.analysis?.spamScore || 0;
+  const spamReasons = email.analysis?.reasons || [];
+  const summary = email.analysis?.summary;
+
   return (
     <motion.div
       whileHover={{ scale: 1.02 }}
       className="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow p-4 cursor-pointer border border-gray-100"
+      onClick={() => onClick && onClick(email)}
     >
       <div className="flex items-start space-x-4">
         <div className="flex-shrink-0">
@@ -41,8 +47,40 @@ function EmailCard({ email }) {
             {senderName}
           </p>
           <p className="text-sm text-gray-500 line-clamp-2">
-            {email?.snippet || 'No preview available'}
+            {summary || email?.snippet || 'No preview available'}
           </p>
+          
+          {hasSpamIndicators && (
+            <div className="mt-2">
+              <div className="flex items-center space-x-2">
+                <div className={`h-2 flex-grow rounded-full ${
+                  spamScore > 0.6 ? 'bg-red-200' : 'bg-yellow-200'
+                }`}>
+                  <div
+                    className={`h-2 rounded-full ${
+                      spamScore > 0.6 ? 'bg-red-500' : 'bg-yellow-500'
+                    }`}
+                    style={{ width: `${spamScore * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs font-medium text-gray-500">
+                  {Math.round(spamScore * 100)}% spam probability
+                </span>
+              </div>
+              {spamReasons.length > 0 && (
+                <div className="mt-1">
+                  <ul className="text-xs text-gray-500">
+                    {spamReasons.map((reason, idx) => (
+                      <li key={idx} className="flex items-center">
+                        <span className="mr-1">•</span>
+                        {reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap gap-1">
             {category && (
               <span 

@@ -5,9 +5,9 @@ const ensureAuth = require('../middleware/ensureAuth');
 
 router.use(ensureAuth);
 
-router.post('/rules', ruleController.createRule);
-router.get('/rules', ruleController.getRules);
-router.put('/rules/:id', ruleController.updateRule);
-router.delete('/rules/:id', ruleController.deleteRule);
+router.post('/', ruleController.createRule);
+router.get('/', ruleController.getRules);
+router.put('/:id', ruleController.updateRule);
+router.delete('/:id', ruleController.deleteRule);
 
 module.exports = router;
