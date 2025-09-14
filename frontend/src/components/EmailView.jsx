@@ -45,21 +45,10 @@ const EmailView = ({ email, onClose }) => {
     }
   };
 
-  // Define analyzeEmail outside of the component body to avoid dependency issues
-  const analyzeEmailOnMount = () => {
-    // Only run if we have an email ID and we're not already analyzing
-    if (email?.id && !loading) {
-      analyzeEmail();
-    }
-  };
-  
   useEffect(() => {
     if (email?.id) {
       fetchEmailContent();
-      // Automatically analyze the email to show spam score when opening
-      setTimeout(() => {
-        if (!loading) analyzeEmail();
-      }, 500); // Slight delay to ensure content has time to load
+      // No automatic analysis - user will click the button when they want it
     }
   }, [email?.id]);
 
@@ -143,7 +132,7 @@ const EmailView = ({ email, onClose }) => {
       onClick={onClose}
     >
       <motion.div
-        className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+        className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Email Header */}
@@ -178,31 +167,17 @@ const EmailView = ({ email, onClose }) => {
           ) : (email.content || emailContent?.content) ? (
             <div className="h-full overflow-auto">
               <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 sticky top-0 z-10">
-                {loading ? (
-                  <div className="flex items-center space-x-2 text-gray-600 py-1">
-                    <FaSpinner className="animate-spin h-4 w-4" />
-                    <span>Analyzing for security threats...</span>
-                  </div>
-                ) : analysis ? (
+                {analysis ? (
                   <>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium text-gray-900">Spam Score:</span>
+                      <span className="font-medium text-gray-900">Security Status:</span>
                       <span className={`px-3 py-1 rounded-full text-sm font-medium ${
                         spamScore > 0.6 ? 'bg-red-100 text-red-800' : 
                         spamScore > 0.3 ? 'bg-yellow-100 text-yellow-800' : 
                         'bg-green-100 text-green-800'
                       }`}>
-                        {Math.round(spamScore * 100)}%
+                        {spamScore > 0.6 ? 'High Risk' : spamScore > 0.3 ? 'Medium Risk' : 'Safe'} (Score: {(spamScore * 100).toFixed(0)}%)
                       </span>
-                    </div>
-                    <div className="overflow-hidden h-2 mb-1 text-xs flex rounded bg-gray-200">
-                      <div 
-                        style={{ width: `${Math.max(5, Math.round(spamScore * 100))}%` }}
-                        className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${
-                          spamScore > 0.6 ? 'bg-red-500' : 
-                          spamScore > 0.3 ? 'bg-yellow-500' : 'bg-green-500'
-                        }`}
-                      ></div>
                     </div>
                     
                     {/* Display Category */}
@@ -221,8 +196,8 @@ const EmailView = ({ email, onClose }) => {
                     )}
                   </>
                 ) : (
-                  <div className="text-gray-500 text-sm">
-                    Email security analysis not yet available
+                  <div className="text-gray-500 text-sm text-center py-2">
+                    Click "Generate AI Summary" below to analyze this email for security threats and get an AI summary
                   </div>
                 )}
               </div>
@@ -238,53 +213,34 @@ const EmailView = ({ email, onClose }) => {
           )}
         </div>
 
-        {/* Analysis Section - Only shown when analysis exists */}
-        {analysis && (
-          <div className="border-t border-gray-200 bg-gray-50">
-            <div className="p-6 space-y-4">
-              {/* Spam Score */}
+        {/* Analysis Section - Shows when analysis exists */}
+        {analysis && summary && (
+          <div className="border-t border-gray-200 bg-gray-50 max-h-60 overflow-y-auto">
+            <div className="p-6">
+              {/* Email Summary - Main focus */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="text-lg font-medium text-gray-900 mb-2 flex items-center">
-                  <svg className="h-5 w-5 mr-2 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                  Spam Analysis
+                <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                  <HiOutlineLightBulb className="h-5 w-5 mr-2 text-amber-500" />
+                  AI Summary
                 </h3>
-                <div className="relative pt-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-900">Spam Score</span>
-                    <span className={`text-sm font-medium ${
-                      spamScore > 0.6 ? 'text-red-600' : 
-                      spamScore > 0.3 ? 'text-yellow-600' : 'text-green-600'
-                    }`}>
-                      {Math.round(spamScore * 100)}%
-                    </span>
-                  </div>
-                  <div className="overflow-hidden h-2 mt-2 text-xs flex rounded bg-gray-200">
-                    <div 
-                      style={{ width: `${Math.max(5, Math.round(spamScore * 100))}%` }}
-                      className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${
-                        spamScore > 0.6 ? 'bg-red-500' : 
-                        spamScore > 0.3 ? 'bg-yellow-500' : 'bg-green-500'
-                      }`}
-                    ></div>
-                  </div>
+                <div className="text-gray-700 leading-relaxed">
+                  {summary}
                 </div>
               </div>
 
-              {/* Spam Reasons */}
+              {/* Spam Reasons - Only if there are any */}
               {spamReasons.length > 0 && (
-                <div className="bg-white rounded-lg p-4 shadow-sm">
+                <div className="bg-white rounded-lg p-4 shadow-sm mt-4">
                   <h3 className="text-lg font-medium text-gray-900 mb-2 flex items-center">
                     <svg className="h-5 w-5 mr-2 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
-                    Detected Issues
+                    Security Concerns
                   </h3>
                   <ul className="space-y-2">
                     {spamReasons.map((reason, index) => (
                       <li key={index} className="flex items-start">
-                        <svg className="h-5 w-5 text-yellow-400 mt-0.5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-5 w-5 text-yellow-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                         </svg>
                         <span className="text-gray-600">{reason}</span>
@@ -293,17 +249,32 @@ const EmailView = ({ email, onClose }) => {
                   </ul>
                 </div>
               )}
+            </div>
+          </div>
+        )}
 
-              {/* Email Summary */}
-              {summary && (
-                <div className="bg-white rounded-lg p-4 shadow-sm">
-                  <h3 className="text-lg font-medium text-gray-900 mb-2 flex items-center">
-                    <HiOutlineLightBulb className="h-5 w-5 mr-2 text-amber-500" />
-                    AI Summary
-                  </h3>
-                  <p className="text-gray-600">{summary}</p>
-                </div>
-              )}
+        {/* Analysis exists but no summary - Show spam details only */}
+        {analysis && !summary && spamReasons.length > 0 && (
+          <div className="border-t border-gray-200 bg-gray-50">
+            <div className="p-6">
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <h3 className="text-lg font-medium text-gray-900 mb-2 flex items-center">
+                  <svg className="h-5 w-5 mr-2 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  Security Analysis
+                </h3>
+                <ul className="space-y-2">
+                  {spamReasons.map((reason, index) => (
+                    <li key={index} className="flex items-start">
+                      <svg className="h-5 w-5 text-yellow-400 mt-0.5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <span className="text-gray-600">{reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
         )}

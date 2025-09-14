@@ -78,7 +78,8 @@ export async function fetchEmails(maxResults = 10) { // Reduced default for bett
     const response = await fetchWithTimeout(
       // Changed to match backend route
       `${API_BASE_URL}/emails/messages?maxResults=${maxResults}`, 
-      defaultOptions
+      defaultOptions,
+      60000 // 60 second timeout for email fetching
     );
     return handleResponse(response);
   } catch (error) {

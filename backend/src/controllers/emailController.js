@@ -58,6 +58,7 @@ async function fetchAndProcessEmails(gmail, userId, maxResults = 20) {
       }
     },
     select: {
+      id: true,
       externalId: true,
       content: true  // Check if we already have content
     }
@@ -151,10 +152,12 @@ async function getEmailDetails(gmail, messageId) {
     id: messageId,
     subject: headers.find(h => h.name === 'Subject')?.value || 'No Subject',
     sender: sender || 'Unknown Sender',
+    to: headers.find(h => h.name === 'To')?.value || null,
     date: date,
     snippet: msgRes.data.snippet || '',
     content: content || '',
-    labels: (msgRes.data.labelIds || []).join(',')
+    labels: msgRes.data.labelIds || [],
+    threadId: msgRes.data.threadId || null
   };
 }
 
@@ -163,17 +166,21 @@ async function saveEmailToDb(email, userId) {
     where: { id: email.id },
     update: {
       content: email.content,
-      date: email.date,
-      labels: email.labels
+      date: new Date(email.date),
+      labels: email.labels || [],
+      externalId: email.id
     },
     create: {
       id: email.id,
-      subject: email.subject,
-      sender: email.sender,
-      snippet: email.snippet,
-      content: email.content,
-      labels: email.labels,
-      date: email.date,
+      externalId: email.id,
+      subject: email.subject || '',
+      sender: email.sender || '',
+      to: email.to || null,
+      snippet: email.snippet || '',
+      content: email.content || null,
+      labels: email.labels || [],
+      date: new Date(email.date),
+      threadId: email.threadId || null,
       userId,
     },
   });

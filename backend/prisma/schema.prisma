@@ -1,4 +1,4 @@
-// Prisma schema for InboxOwl
+// Prisma schema for InboxOwl - Complete schema with all features
 
 datasource db {
   provider = "postgresql"
@@ -14,52 +14,70 @@ model User {
   email       String    @unique
   name        String?
   accessToken String?
+  refreshToken String?
   emails      Email[]
   categories  Category[]
   rules       Rule[]
   settings    UserSettings?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 model Email {
-  id          String     @id
+  id          String     @id // Gmail message ID as primary key
+  externalId  String     @unique // Gmail message ID for lookup
   subject     String
   sender      String
+  to          String?
   snippet     String
-  content     String     @default("") // Add content field
-  labels      String
-  date        String
+  content     String?    // Full email content (loaded on demand)
+  labels      String[]   // Gmail labels
+  date        DateTime
+  threadId    String?    // Gmail thread ID
   userId      Int
-  user        User       @relation(fields: [userId], references: [id])
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   categories  Category[] @relation("EmailCategories")
   analysis    EmailAnalysis?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([userId])
+  @@index([date])
+  @@index([externalId])
 }
 
 model Category {
   id          Int       @id @default(autoincrement())
   name        String
-  color       String    @default("#6366F1") // Default indigo color
+  color       String    @default("#6366F1")
+  description String?
   userId      Int
-  user        User      @relation(fields: [userId], references: [id])
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   emails      Email[]   @relation("EmailCategories")
   rules       Rule[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@unique([name, userId]) // Prevent duplicate category names per user
+  @@unique([name, userId])
+  @@index([userId])
 }
 
 model Rule {
   id          Int       @id @default(autoincrement())
   name        String
+  description String?
   condition   String    // JSON string containing rule conditions
+  isActive    Boolean   @default(true)
   categoryId  Int
   userId      Int
-  user        User      @relation(fields: [userId], references: [id])
-  category    Category  @relation(fields: [categoryId], references: [id])
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@unique([name, userId]) // Prevent duplicate rule names per user
+  @@unique([name, userId])
+  @@index([userId])
+  @@index([categoryId])
 }
 
 model EmailAnalysis {
@@ -67,19 +85,45 @@ model EmailAnalysis {
   emailId     String    @unique
   isSpam      Boolean   @default(false)
   spamScore   Float     @default(0)
-  reasons     String[]  // Array of reasons why email might be spam
-  summary     String?   // Optional summary for long emails
+  reasons     String[]  // Array of spam detection reasons
+  summary     String?   // AI-generated summary
+  category    String?   // Auto-detected category
+  categoryId  Int?      // Linked category ID
+  confidence  Float?    // Analysis confidence score
+  aiModel     String?   // Which AI model was used
   email       Email     @relation(fields: [emailId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  @@index([emailId])
+  @@index([isSpam])
+  @@index([spamScore])
 }
 
 model UserSettings {
-  id            Int       @id @default(autoincrement())
-  userId        Int       @unique
-  user          User      @relation(fields: [userId], references: [id])
-  lastHistoryId String?   // Gmail history ID for incremental sync
-  lastSyncTime  DateTime? // When the last sync happened
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id              Int       @id @default(autoincrement())
+  userId          Int       @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastHistoryId   String?   // Gmail history ID for incremental sync
+  lastSyncTime    DateTime? // When the last sync happened
+  syncFrequency   Int       @default(300) // Sync frequency in seconds
+  autoCategories  Boolean   @default(true) // Enable auto-categorization
+  spamDetection   Boolean   @default(true) // Enable spam detection
+  aiSummaries     Boolean   @default(true) // Enable AI summaries
+  maxEmailsPerSync Int      @default(50) // Max emails to fetch per sync
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model SyncCache {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  cacheKey    String    // Unique cache key
+  data        String    // JSON data
+  expiresAt   DateTime  // When this cache expires
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, cacheKey])
+  @@index([userId])
+  @@index([expiresAt])
 }

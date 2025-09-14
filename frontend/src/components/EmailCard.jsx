@@ -14,7 +14,7 @@ function formatDate(dateString) {
 function EmailCard({ email, onClick }) {
   const senderName = email?.sender || 'Unknown Sender';
   const firstLetter = senderName.charAt(0).toUpperCase();
-  const labels = email?.labels ? email.labels.split(',').filter(Boolean) : [];
+  const labels = email?.labels ? (Array.isArray(email.labels) ? email.labels : email.labels.split(',').filter(Boolean)) : [];
   const category = email?.category;
 
   const hasSpamIndicators = email.analysis?.isSpam;
