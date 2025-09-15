@@ -323,7 +323,7 @@ const SettingsPanel = ({ onClose }) => {
       )}
       
       {/* Category Rules Tab */}
-      {activeTab === 'categoryRules' && <CategoryRulesTab />}
+  {activeTab === 'categoryRules' && <CategoryRulesTab onEmailsRefresh={onClose && onClose.onEmailsRefresh ? onClose.onEmailsRefresh : undefined} />}
 
       {/* Categories Management */}
       {activeTab === 'categories' && (

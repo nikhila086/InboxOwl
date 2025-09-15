@@ -2,16 +2,42 @@ import React, { useState, useEffect } from 'react';
 import { FiPlus, FiTrash2, FiSave } from 'react-icons/fi';
 import axios from 'axios';
 
-const CategoryRulesTab = () => {
+const FIELD_OPTIONS = [
+  { value: 'sender', label: 'From (Sender Email)' },
+  { value: 'subject', label: 'Subject' },
+  { value: 'content', label: 'Email Content/Body' }
+];
+
+const OPERATOR_OPTIONS = [
+  { value: 'contains', label: 'Contains' },
+  { value: 'equals', label: 'Equals' },
+  { value: 'startsWith', label: 'Starts with' },
+  { value: 'endsWith', label: 'Ends with' }
+];
+
+const CategoryRulesTab = ({ onEmailsRefresh }) => {
   const [categories, setCategories] = useState([]);
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [newRule, setNewRule] = useState({
     name: '',
-    conditions: [{ field: 'subject', operator: 'contains', value: '' }],
+    conditions: [{ field: 'sender', operator: 'contains', value: '' }],
     categoryId: ''
   });
+  const [senderSuggestions, setSenderSuggestions] = useState([]);
+  // Fetch sender autocomplete suggestions
+  useEffect(() => {
+    const fetchSenders = async () => {
+      try {
+        const res = await axios.get('http://localhost:3000/api/emails/senders/autocomplete');
+        setSenderSuggestions(res.data || []);
+      } catch (e) {
+        setSenderSuggestions([]);
+      }
+    };
+    fetchSenders();
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -37,10 +63,16 @@ const CategoryRulesTab = () => {
       const rulesRes = await axios.get('http://localhost:3000/api/rules');
       if (rulesRes.data && Array.isArray(rulesRes.data)) {
         setRules(rulesRes.data);
+      } else {
+        console.warn('Unexpected rules response:', rulesRes.data);
+        setRules([]);
       }
     } catch (err) {
       console.error('Error fetching data:', err);
-      setError('Failed to load data');
+      setError('Failed to load data: ' + (err.response?.data?.error || err.message));
+      // Set empty arrays to prevent crashes
+      setCategories([]);
+      setRules([]);
     } finally {
       setLoading(false);
     }
@@ -51,7 +83,7 @@ const CategoryRulesTab = () => {
       ...prev,
       conditions: [
         ...prev.conditions,
-        { field: 'subject', operator: 'contains', value: '' }
+        { field: 'sender', operator: 'contains', value: '' }
       ]
     }));
   };
@@ -106,7 +138,11 @@ const CategoryRulesTab = () => {
         categoryId: newRule.categoryId // Keep the selected category
       });
       
-      fetchData(); // Refresh rules list
+  fetchData(); // Refresh rules list
+  // Refetch emails to update category colors
+  if (typeof onEmailsRefresh === 'function') {
+    await onEmailsRefresh();
+  }
     } catch (err) {
       console.error('Error saving rule:', err);
       setError('Failed to save rule');
@@ -119,7 +155,11 @@ const CategoryRulesTab = () => {
     try {
       setLoading(true);
       await axios.delete(`http://localhost:3000/api/rules/${id}`);
-      setRules(rules.filter(rule => rule.id !== id));
+  setRules(rules.filter(rule => rule.id !== id));
+  // Refetch emails to update category colors
+  if (typeof onEmailsRefresh === 'function') {
+    await onEmailsRefresh();
+  }
     } catch (err) {
       console.error('Error deleting rule:', err);
       setError('Failed to delete rule');
@@ -155,7 +195,24 @@ const CategoryRulesTab = () => {
             <div className="space-y-3">
               {rules.map(rule => {
                 const category = categories.find(c => c.id === rule.categoryId);
-                const conditions = JSON.parse(rule.condition);
+                
+                // Handle both old and new rule formats
+                let conditions = [];
+                if (rule.condition) {
+                  try {
+                    conditions = JSON.parse(rule.condition);
+                  } catch (e) {
+                    console.warn('Failed to parse rule condition:', rule.condition);
+                    conditions = [];
+                  }
+                } else if (rule.field && rule.conditionType && rule.value !== undefined) {
+                  // New format: individual fields
+                  conditions = [{
+                    field: rule.field,
+                    operator: rule.conditionType,
+                    value: rule.value
+                  }];
+                }
                 
                 return (
                   <div key={rule.id} className="border border-gray-200 rounded-md p-3">
@@ -187,11 +244,13 @@ const CategoryRulesTab = () => {
                     <div className="mt-2">
                       <p className="text-xs text-gray-500 mb-1">Conditions:</p>
                       <ul className="pl-2">
-                        {conditions.map((condition, i) => (
+                        {conditions && conditions.length > 0 ? conditions.map((condition, i) => (
                           <li key={i} className="text-sm text-gray-600">
                             <code>{condition.field}</code> {condition.operator} "<code>{condition.value}</code>"
                           </li>
-                        ))}
+                        )) : (
+                          <li className="text-sm text-gray-400 italic">No conditions defined</li>
+                        )}
                       </ul>
                     </div>
                   </div>
@@ -254,9 +313,11 @@ const CategoryRulesTab = () => {
                     onChange={(e) => updateCondition(index, 'field', e.target.value)}
                     className="border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                   >
-                    <option value="sender">From</option>
-                    <option value="subject">Subject</option>
-                    <option value="snippet">Content</option>
+                    {FIELD_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                   
                   <select
@@ -264,19 +325,39 @@ const CategoryRulesTab = () => {
                     onChange={(e) => updateCondition(index, 'operator', e.target.value)}
                     className="border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                   >
-                    <option value="contains">contains</option>
-                    <option value="equals">equals</option>
-                    <option value="startsWith">starts with</option>
-                    <option value="endsWith">ends with</option>
+                    {OPERATOR_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                   
-                  <input
-                    type="text"
-                    value={condition.value}
-                    onChange={(e) => updateCondition(index, 'value', e.target.value)}
-                    className="flex-1 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="Value to match"
-                  />
+                  {condition.field === 'sender' ? (
+                    <input
+                      type="text"
+                      value={condition.value}
+                      onChange={(e) => updateCondition(index, 'value', e.target.value)}
+                      className="flex-1 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      placeholder="Value to match"
+                      list="sender-autocomplete"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      value={condition.value}
+                      onChange={(e) => updateCondition(index, 'value', e.target.value)}
+                      className="flex-1 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      placeholder="Value to match"
+                    />
+                  )}
+                  {/* Datalist for sender autocomplete */}
+                  {condition.field === 'sender' && (
+                    <datalist id="sender-autocomplete">
+                      {senderSuggestions.map((s, i) => (
+                        <option key={i} value={s.email}>{s.name ? `${s.name} <${s.email}>` : s.email}</option>
+                      ))}
+                    </datalist>
+                  )}
                   
                   <button
                     type="button"

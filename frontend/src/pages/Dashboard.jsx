@@ -185,12 +185,12 @@ function Dashboard() {
               
               {showSettings && (
                 <div className="fixed inset-0 bg-gray-800 bg-opacity-30 flex justify-center items-center z-50 p-4">
-                  <SettingsPanel onClose={() => setShowSettings(false)} />
+                  <SettingsPanel onClose={{ close: () => setShowSettings(false), onEmailsRefresh: fetchEmails }} />
                 </div>
               )}
             </>
           )}
-          {activeTab === 'settings' && <SettingsPanel onClose={() => setActiveTab('emails')} />}
+          {activeTab === 'settings' && <SettingsPanel onClose={{ close: () => setActiveTab('emails'), onEmailsRefresh: fetchEmails }} />}
         </motion.div>
       </div>
     </Layout>

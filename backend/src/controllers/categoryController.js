@@ -18,6 +18,48 @@ exports.createCategory = async (req, res) => {
       }
     });
 
+    // After creating the category, re-apply all rules to all emails for this user
+    const emails = await prisma.email.findMany({ where: { userId: req.user.id } });
+    const rules = await prisma.rule.findMany({ where: { userId: req.user.id } });
+    for (const email of emails) {
+      // Remove all categories from email first
+      await prisma.email.update({
+        where: { id: email.id },
+        data: { categories: { set: [] } }
+      });
+      // Apply all rules with all condition types
+      for (const rule of rules) {
+        if (!email[rule.field] || !rule.value) continue;
+        let isMatch = false;
+        const fieldValue = email[rule.field];
+        switch (rule.conditionType) {
+          case 'contains':
+            isMatch = fieldValue.includes(rule.value);
+            break;
+          case 'equals':
+            isMatch = fieldValue === rule.value;
+            break;
+          case 'startsWith':
+            isMatch = fieldValue.startsWith(rule.value);
+            break;
+          case 'endsWith':
+            isMatch = fieldValue.endsWith(rule.value);
+            break;
+          case 'regex':
+            try { isMatch = new RegExp(rule.value).test(fieldValue); } catch { isMatch = false; }
+            break;
+          default:
+            isMatch = false;
+        }
+        if (isMatch) {
+          await prisma.email.update({
+            where: { id: email.id },
+            data: { categories: { connect: { id: rule.categoryId } } }
+          });
+        }
+      }
+    }
+
     res.json(category);
   } catch (error) {
     console.error('Create category error:', error);

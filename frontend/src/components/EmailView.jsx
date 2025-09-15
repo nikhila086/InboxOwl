@@ -151,6 +151,9 @@ const EmailView = ({ email, onClose }) => {
           <div className="flex items-center justify-between text-sm text-gray-500">
             <div>
               <p className="font-medium text-gray-900">{email.sender}</p>
+              {email.senderEmail && email.senderEmail !== email.sender && (
+                <p className="text-gray-600">{email.senderEmail}</p>
+              )}
               <p>To: {email.to || 'me'}</p>
             </div>
             <p>{formatDate(email.date)}</p>

@@ -13,14 +13,29 @@ function formatDate(dateString) {
 
 function EmailCard({ email, onClick }) {
   const senderName = email?.sender || 'Unknown Sender';
+  const senderEmail = email?.senderEmail || '';
   const firstLetter = senderName.charAt(0).toUpperCase();
   const labels = email?.labels ? (Array.isArray(email.labels) ? email.labels : email.labels.split(',').filter(Boolean)) : [];
-  const category = email?.category;
+  const categories = email?.categories || []; // Changed from category to categories
 
   const hasSpamIndicators = email.analysis?.isSpam;
   const spamScore = email.analysis?.spamScore || 0;
   const spamReasons = email.analysis?.reasons || [];
   const summary = email.analysis?.summary;
+
+  // Create display text for sender
+  const getSenderDisplay = () => {
+    if (senderEmail && senderName !== senderEmail) {
+      // If we have both name and email and they're different, show both
+      return `${senderName} <${senderEmail}>`;
+    } else if (senderEmail) {
+      // If we only have email or name equals email, just show email
+      return senderEmail;
+    } else {
+      // Fallback to sender name
+      return senderName;
+    }
+  };
 
   return (
     <motion.div
@@ -44,7 +59,7 @@ function EmailCard({ email, onClick }) {
             </span>
           </div>
           <p className="text-sm text-gray-600 truncate mb-1">
-            {senderName}
+            {getSenderDisplay()}
           </p>
           <p className="text-sm text-gray-500 line-clamp-2">
             {summary || email?.snippet || 'No preview available'}
@@ -82,7 +97,7 @@ function EmailCard({ email, onClick }) {
             </div>
           )}
           <div className="mt-2 flex flex-wrap gap-1">
-            {category && (
+            {categories.map(category => (
               <span 
                 key={category.id}
                 className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
@@ -94,7 +109,7 @@ function EmailCard({ email, onClick }) {
               >
                 {category.name}
               </span>
-            )}
+            ))}
             {labels.length > 0 && labels.map(label => (
               <span 
                 key={label}

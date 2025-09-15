@@ -101,7 +101,7 @@ class EmailAnalysisService {
       // Fall back to component analysis if AI analysis failed
       if (!result) {
         console.log('Using component-based analysis');
-        const spamAnalysis = this.detectSpam(combinedContent);
+        const spamAnalysis = await this.detectSpam(combinedContent);
         const categorization = await this.categorizeEmail(subject, body, emailId);
         const summary = await this.generateSummary(subject, body);
         
@@ -132,32 +132,54 @@ class EmailAnalysisService {
   }
 
   /**
-   * Simple spam detection based on keywords
+   * Simple spam detection based on keywords and user-defined rules
    */
-  static detectSpam(content) {
+  static async detectSpam(content) {
     if (!content) return { isSpam: false, spamScore: 0, reasons: [] };
     
     const contentLower = content.toLowerCase();
     let spamScore = 0;
     const reasons = [];
     
-    // Check for suspicious keywords
-    const SPAM_KEYWORDS = [
-      'urgent', 'action required', 'account suspended', 'verify your account',
-      'click here', 'login to verify', 'unusual activity', 'suspicious activity',
-      'password expired', 'win', 'winner', 'congratulations', 'claim your prize',
-      'limited time', 'free money', 'exclusive offer', 'guaranteed'
-    ];
+    try {
+      // Get user-defined spam rules from database
+      const { PrismaClient } = require('@prisma/client');
+      const prisma = new PrismaClient();
+      
+      const spamRules = await prisma.spamRule.findMany({
+        where: { enabled: true }
+      });
+      
+      // Check against user-defined rules
+      spamRules.forEach(rule => {
+        if (contentLower.includes(rule.pattern.toLowerCase())) {
+          spamScore += rule.score;
+          reasons.push(`Matches spam rule: "${rule.pattern}" (score: ${rule.score})`);
+        }
+      });
+      
+      await prisma.$disconnect();
+    } catch (error) {
+      console.error('Error loading spam rules:', error);
+      
+      // Fallback to hardcoded keywords if database fails
+      const SPAM_KEYWORDS = [
+        'urgent', 'action required', 'account suspended', 'verify your account',
+        'click here', 'login to verify', 'unusual activity', 'suspicious activity',
+        'password expired', 'win', 'winner', 'congratulations', 'claim your prize',
+        'limited time', 'free money', 'exclusive offer', 'guaranteed'
+      ];
+      
+      SPAM_KEYWORDS.forEach(keyword => {
+        if (contentLower.includes(keyword.toLowerCase())) {
+          spamScore += 0.1; // Default score for hardcoded keywords
+          reasons.push(`Contains suspicious keyword: "${keyword}"`);
+        }
+      });
+    }
     
-    SPAM_KEYWORDS.forEach(keyword => {
-      if (contentLower.includes(keyword.toLowerCase())) {
-        spamScore += 1;
-        reasons.push(`Contains suspicious keyword: "${keyword}"`);
-      }
-    });
-    
-    // Normalize the score to 0-1 range
-    spamScore = Math.min(spamScore / 10, 1);
+    // Normalize the score to 0-1 range (cap at 1.0)
+    spamScore = Math.min(spamScore, 1);
     
     return {
       isSpam: spamScore > 0.6,

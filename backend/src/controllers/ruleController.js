@@ -50,20 +50,28 @@ function emailMatchesRule(email, ruleCondition) {
 // Create a new rule
 exports.createRule = async (req, res) => {
   try {
-    const { name, condition, categoryId } = req.body;
-    
+    console.log('Authenticated user:', req.user); // Debug log
+    console.log('Request body:', req.body); // Debug log
+    const { name, condition, conditions, categoryId, isActive } = req.body;
+
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
-    // Validate rule condition format
-    try {
-      const conditions = JSON.parse(condition);
-      if (!Array.isArray(conditions)) {
-        throw new Error('Conditions must be an array');
+    // Handle both condition formats for backward compatibility
+    let ruleConditions = [];
+    if (conditions && Array.isArray(conditions)) {
+      ruleConditions = conditions;
+    } else if (condition) {
+      try {
+        ruleConditions = JSON.parse(condition);
+      } catch (error) {
+        return res.status(400).json({ error: 'Invalid condition format' });
       }
-    } catch (error) {
-      return res.status(400).json({ error: 'Invalid rule condition format' });
+    }
+
+    if (!Array.isArray(ruleConditions) || ruleConditions.length === 0) {
+      return res.status(400).json({ error: 'Conditions must be a non-empty array' });
     }
 
     // Verify category belongs to user
@@ -78,37 +86,75 @@ exports.createRule = async (req, res) => {
       return res.status(404).json({ error: 'Category not found' });
     }
 
+    // Create rule for the first condition
+    const firstCondition = ruleConditions[0];
+    const fieldMapping = {
+      'sender': 'sender',
+      'from': 'sender',
+      'subject': 'subject',
+      'body': 'content'
+    };
+    
     const rule = await prisma.rule.create({
       data: {
         name,
-        condition,
+        description: `Rule for ${name}`,
+        field: fieldMapping[firstCondition.field] || firstCondition.field,
+        conditionType: firstCondition.operator || 'contains',
+        value: firstCondition.value || '',
+        isActive: isActive !== false,
         categoryId: parseInt(categoryId),
         userId: req.user.id
       }
     });
 
-    // Apply rule to existing emails
-    const emails = await prisma.email.findMany({
-      where: { userId: req.user.id }
-    });
-
-    const matchingEmails = emails.filter(email => emailMatchesRule(email, condition));
-    
-    if (matchingEmails.length > 0) {
-      await prisma.category.update({
-        where: { id: parseInt(categoryId) },
-        data: {
-          emails: {
-            connect: matchingEmails.map(email => ({ id: email.id }))
-          }
-        }
+    // After creating the rule, re-apply all rules to all emails for this user
+    const emails = await prisma.email.findMany({ where: { userId: req.user.id } });
+    const rules = await prisma.rule.findMany({ where: { userId: req.user.id } });
+    for (const email of emails) {
+      // Remove all categories from email first
+      await prisma.email.update({
+        where: { id: email.id },
+        data: { categories: { set: [] } }
       });
+      // Apply all rules with all condition types
+      for (const rule of rules) {
+        if (!email[rule.field] || !rule.value) continue;
+        let isMatch = false;
+        const fieldValue = email[rule.field];
+        switch (rule.conditionType) {
+          case 'contains':
+            isMatch = fieldValue.includes(rule.value);
+            break;
+          case 'equals':
+            isMatch = fieldValue === rule.value;
+            break;
+          case 'startsWith':
+            isMatch = fieldValue.startsWith(rule.value);
+            break;
+          case 'endsWith':
+            isMatch = fieldValue.endsWith(rule.value);
+            break;
+          case 'regex':
+            try { isMatch = new RegExp(rule.value).test(fieldValue); } catch { isMatch = false; }
+            break;
+          default:
+            isMatch = false;
+        }
+        if (isMatch) {
+          await prisma.email.update({
+            where: { id: email.id },
+            data: { categories: { connect: { id: rule.categoryId } } }
+          });
+        }
+      }
     }
 
-    res.json(rule);
+    console.log('Rule created successfully and categories re-applied:', rule);
+    res.status(201).json(rule);
   } catch (error) {
-    console.error('Create rule error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error creating rule:', error);
+    res.status(500).json({ error: 'Failed to create rule' });
   }
 };
 

@@ -5,6 +5,30 @@ const getGmailClient = require('../utils/gmailClient');
 const EmailAnalysisService = require('../services/emailAnalysisService');
 const SyncCache = require('../services/syncCacheService');
 
+// Get unique senders for autocomplete
+exports.getUniqueSenders = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const senders = await prisma.email.findMany({
+      where: { userId: req.user.id },
+      select: { sender: true, senderEmail: true },
+    });
+    // Deduplicate by senderEmail
+    const unique = {};
+    for (const s of senders) {
+      if (s.senderEmail) unique[s.senderEmail] = s.sender;
+    }
+    const result = Object.entries(unique).map(([email, name]) => ({ name, email }));
+    res.json(result);
+  } catch (error) {
+    console.error('Get unique senders error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+
 // Helper function to fetch and process emails with throttling and optimization
 async function fetchAndProcessEmails(gmail, userId, maxResults = 20) {
   console.log(`Fetching up to ${maxResults} messages from Gmail`);
@@ -86,6 +110,10 @@ async function fetchAndProcessEmails(gmail, userId, maxResults = 20) {
         try {
           const emailDetails = await getEmailDetails(gmail, message.id);
           const savedEmail = await saveEmailToDb(emailDetails, userId);
+
+          // Evaluate rules and assign categories
+          await evaluateRulesAndAssignCategories(savedEmail, userId);
+
           return savedEmail;
         } catch (error) {
           console.error(`Error processing message ${message.id}:`, error);
@@ -118,11 +146,17 @@ async function getEmailDetails(gmail, messageId) {
   // Extract sender email and name from the From header
   const fromHeader = headers.find(h => h.name === 'From')?.value || '';
   let sender = fromHeader;
+  let senderEmail = '';
   
-  // Try to parse out the name if it's in the format "Name <email@example.com>"
+  // Try to parse out the name and email if it's in the format "Name <email@example.com>"
   const match = fromHeader.match(/^([^<]*?)\s*<([^>]+)>$/);
   if (match) {
     sender = match[1].trim() || match[2]; // Use name if available, otherwise use email
+    senderEmail = match[2]; // Extract the email address
+  } else {
+    // If no name is provided, just use the email
+    senderEmail = fromHeader;
+    sender = fromHeader;
   }
 
   // Extract email content from the message payload
@@ -152,6 +186,7 @@ async function getEmailDetails(gmail, messageId) {
     id: messageId,
     subject: headers.find(h => h.name === 'Subject')?.value || 'No Subject',
     sender: sender || 'Unknown Sender',
+    senderEmail: senderEmail || '',
     to: headers.find(h => h.name === 'To')?.value || null,
     date: date,
     snippet: msgRes.data.snippet || '',
@@ -168,13 +203,15 @@ async function saveEmailToDb(email, userId) {
       content: email.content,
       date: new Date(email.date),
       labels: email.labels || [],
-      externalId: email.id
+      externalId: email.id,
+      senderEmail: email.senderEmail || null
     },
     create: {
       id: email.id,
       externalId: email.id,
       subject: email.subject || '',
       sender: email.sender || '',
+      senderEmail: email.senderEmail || null,
       to: email.to || null,
       snippet: email.snippet || '',
       content: email.content || null,
@@ -184,6 +221,50 @@ async function saveEmailToDb(email, userId) {
       userId,
     },
   });
+}
+
+// Function to evaluate rules and assign categories to emails
+async function evaluateRulesAndAssignCategories(email, userId) {
+  const rules = await prisma.rule.findMany({
+    where: {
+      userId,
+      isActive: true
+    },
+  });
+
+  for (const rule of rules) {
+    const { field, conditionType, value } = rule;
+    let emailFieldValue = email[field];
+
+    if (!emailFieldValue) continue;
+
+    // Check condition based on conditionType
+    let isMatch = false;
+    switch (conditionType) {
+      case 'contains':
+        isMatch = emailFieldValue.includes(value);
+        break;
+      case 'regex':
+        isMatch = new RegExp(value).test(emailFieldValue);
+        break;
+      default:
+        console.warn(`Unknown condition type: ${conditionType}`);
+    }
+
+    if (isMatch) {
+      // Assign category to the email
+      await prisma.email.update({
+        where: { id: email.id },
+        data: {
+          categories: {
+            connect: { id: rule.categoryId }
+          }
+        }
+      });
+      console.log(`Email ${email.id} categorized under ${rule.categoryId} based on rule ${rule.id}`);
+      break; // Stop after the first matching rule
+    }
+  }
 }
 
 exports.getEmails = async (req, res) => {
@@ -395,3 +476,94 @@ exports.getEmailById = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch email' });
   }
 };
+
+// Create a new rule
+async function createRule(req, res) {
+  const { name, description, field, conditionType, value, categoryId, userId } = req.body;
+
+  try {
+    const newRule = await prisma.rule.create({
+      data: {
+        name,
+        description,
+        field,
+        conditionType,
+        value,
+        categoryId,
+        userId,
+      },
+    });
+    res.status(201).json(newRule);
+  } catch (error) {
+    console.error('Error creating rule:', error);
+    res.status(500).json({ error: 'Failed to create rule' });
+  }
+}
+
+// Fetch all rules for a user
+async function getRules(req, res) {
+  const { userId } = req.params;
+
+  try {
+    const rules = await prisma.rule.findMany({
+      where: { userId },
+    });
+    res.status(200).json(rules);
+  } catch (error) {
+    console.error('Error fetching rules:', error);
+    res.status(500).json({ error: 'Failed to fetch rules' });
+  }
+}
+
+// Update an existing rule
+async function updateRule(req, res) {
+  const { id } = req.params;
+  const { name, description, field, conditionType, value, categoryId, isActive } = req.body;
+
+  try {
+    const updatedRule = await prisma.rule.update({
+      where: { id: parseInt(id, 10) },
+      data: {
+        name,
+        description,
+        field,
+        conditionType,
+        value,
+        categoryId,
+        isActive,
+      },
+    });
+    res.status(200).json(updatedRule);
+  } catch (error) {
+    console.error('Error updating rule:', error);
+    res.status(500).json({ error: 'Failed to update rule' });
+  }
+}
+
+// Delete a rule
+async function deleteRule(req, res) {
+  const { id } = req.params;
+
+  try {
+    await prisma.rule.delete({
+      where: { id: parseInt(id, 10) },
+    });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting rule:', error);
+    res.status(500).json({ error: 'Failed to delete rule' });
+  }
+}
+
+module.exports = {
+  getEmails: exports.getEmails,
+  syncEmails: exports.syncEmails,
+  getEmailById: exports.getEmailById,
+  createRule: exports.createRule,
+  getRules: exports.getRules,
+  updateRule: exports.updateRule,
+  deleteRule: exports.deleteRule,
+  getUniqueSenders: exports.getUniqueSenders,
+};
+
+console.log('Exported functions:', Object.keys(module.exports));

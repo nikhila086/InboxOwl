@@ -28,6 +28,7 @@ model Email {
   externalId  String     @unique // Gmail message ID for lookup
   subject     String
   sender      String
+  senderEmail String?    // Email address of the sender
   to          String?
   snippet     String
   content     String?    // Full email content (loaded on demand)
@@ -66,7 +67,9 @@ model Rule {
   id          Int       @id @default(autoincrement())
   name        String
   description String?
-  condition   String    // JSON string containing rule conditions
+  field       String    // Field to evaluate (e.g., "subject", "sender")
+  conditionType String  // Type of condition (e.g., "contains", "regex")
+  value       String    // Value to match against
   isActive    Boolean   @default(true)
   categoryId  Int
   userId      Int
@@ -126,4 +129,15 @@ model SyncCache {
   @@unique([userId, cacheKey])
   @@index([userId])
   @@index([expiresAt])
+}
+
+model SpamRule {
+  id        Int      @id @default(autoincrement())
+  pattern   String   // The pattern to match against email content
+  score     Float    // The score to add when this pattern matches (0.0 to 1.0)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([pattern])
 }

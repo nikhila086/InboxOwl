@@ -1,8 +1,15 @@
+
 const express = require('express');
 const router = express.Router();
 const emailController = require('../controllers/emailController');
+console.log('DEBUG emailController exports:', Object.keys(emailController));
 const EmailAnalysisService = require('../services/emailAnalysisService');
 const { emailCacheMiddleware } = require('../services/emailCacheService');
+const ruleController = require('../controllers/ruleController');
+const passport = require('passport'); // Import passport for authentication
+
+// Sender autocomplete endpoint (must come after router is defined)
+router.get('/senders/autocomplete', passport.authenticate('session'), emailController.getUniqueSenders);
 
 router.get('/messages', emailController.getEmails);
 router.get('/messages/sync', emailController.syncEmails);
@@ -33,5 +40,11 @@ router.post('/analyze', async (req, res) => {
         });
     }
 });
+
+// Rule management routes
+router.post('/rules', passport.authenticate('session'), ruleController.createRule);
+router.get('/rules/:userId', passport.authenticate('session'), ruleController.getRules);
+router.put('/rules/:id', passport.authenticate('session'), ruleController.updateRule);
+router.delete('/rules/:id', passport.authenticate('session'), ruleController.deleteRule);
 
 module.exports = router;

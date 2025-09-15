@@ -79,7 +79,20 @@ router.delete('/:id', async (req, res) => {
     await prisma.spamRule.delete({
       where: { id: Number(id) },
     });
-    
+
+    // Re-analyze all emails to update spam scores
+    const emails = await prisma.email.findMany();
+    const EmailAnalysisService = require('../services/emailAnalysisService');
+    for (const email of emails) {
+      // Only update spam analysis, keep summary/category
+      const analysis = await EmailAnalysisService.analyzeEmail({
+        subject: email.subject,
+        body: email.content,
+        emailId: email.id
+      });
+      // (analyzeEmail already upserts the analysis)
+    }
+
     res.status(204).end();
   } catch (error) {
     console.error('Error deleting spam rule:', error);

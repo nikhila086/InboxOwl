@@ -8,6 +8,7 @@ const emailRoutes = require('./routes/emailRoutes');
 const authRoutes = require('./routes/authRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const ruleRoutes = require('./routes/ruleRoutes');
+const spamRuleRoutes = require('./routes/spamRules');
 
 function createApp() {
   const app = express();
@@ -35,7 +36,8 @@ function createApp() {
   // API routes
   app.use('/api/emails', emailRoutes);
   app.use('/api/categories', categoryRoutes);
-  app.use('/api/spam-rules', ruleRoutes);
+  app.use('/api/rules', ruleRoutes);
+  app.use('/api/spam-rules', spamRuleRoutes);
   app.use('/api/users', userRoutes);
 
   // Error handling
