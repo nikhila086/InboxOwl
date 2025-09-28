@@ -80,18 +80,34 @@ router.delete('/:id', async (req, res) => {
       where: { id: Number(id) },
     });
 
-    // Re-analyze all emails to update spam scores
+    // Clear existing spam analysis and re-analyze all emails
+    await prisma.emailAnalysis.deleteMany({
+      where: {}
+    });
+    
     const emails = await prisma.email.findMany();
     const EmailAnalysisService = require('../services/emailAnalysisService');
+    
+    console.log(`Re-analyzing ${emails.length} emails after spam rule deletion`);
+    
+    // Set global flag to bypass cache during rule changes
+    global.forceAnalysisRefresh = true;
+    
     for (const email of emails) {
-      // Only update spam analysis, keep summary/category
-      const analysis = await EmailAnalysisService.analyzeEmail({
-        subject: email.subject,
-        body: email.content,
-        emailId: email.id
-      });
-      // (analyzeEmail already upserts the analysis)
+      try {
+        // Force fresh analysis by clearing cache first
+        await EmailAnalysisService.analyzeEmail({
+          subject: email.subject,
+          body: email.content,
+          emailId: email.id
+        });
+      } catch (error) {
+        console.error(`Error re-analyzing email ${email.id}:`, error);
+      }
     }
+    
+    // Reset the global flag
+    global.forceAnalysisRefresh = false;
 
     res.status(204).end();
   } catch (error) {

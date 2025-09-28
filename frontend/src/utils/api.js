@@ -1,3 +1,20 @@
+// Trigger backend recategorization of all emails for the authenticated user
+export async function recategorizeAllEmails() {
+  try {
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/emails/recategorize`,
+      {
+        ...defaultOptions,
+        method: 'POST'
+      },
+      30000 // 30 second timeout
+    );
+    return handleResponse(response);
+  } catch (error) {
+    console.error('Failed to recategorize emails:', error);
+    throw error;
+  }
+}
 const API_BASE_URL = 'http://localhost:3000/api';
 
 const defaultOptions = {

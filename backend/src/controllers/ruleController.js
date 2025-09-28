@@ -52,22 +52,18 @@ exports.createRule = async (req, res) => {
   try {
     console.log('Authenticated user:', req.user); // Debug log
     console.log('Request body:', req.body); // Debug log
-    const { name, condition, conditions, categoryId, isActive } = req.body;
+    const { name, condition, categoryId, isActive } = req.body;
 
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
-    // Handle both condition formats for backward compatibility
+    // Parse conditions from JSON string
     let ruleConditions = [];
-    if (conditions && Array.isArray(conditions)) {
-      ruleConditions = conditions;
-    } else if (condition) {
-      try {
-        ruleConditions = JSON.parse(condition);
-      } catch (error) {
-        return res.status(400).json({ error: 'Invalid condition format' });
-      }
+    try {
+      ruleConditions = JSON.parse(condition);
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid condition format' });
     }
 
     if (!Array.isArray(ruleConditions) || ruleConditions.length === 0) {
@@ -90,9 +86,10 @@ exports.createRule = async (req, res) => {
     const firstCondition = ruleConditions[0];
     const fieldMapping = {
       'sender': 'sender',
-      'from': 'sender',
+      'from': 'sender', 
       'subject': 'subject',
-      'body': 'content'
+      'body': 'content',
+      'content': 'content'
     };
     
     const rule = await prisma.rule.create({
@@ -108,47 +105,7 @@ exports.createRule = async (req, res) => {
       }
     });
 
-    // After creating the rule, re-apply all rules to all emails for this user
-    const emails = await prisma.email.findMany({ where: { userId: req.user.id } });
-    const rules = await prisma.rule.findMany({ where: { userId: req.user.id } });
-    for (const email of emails) {
-      // Remove all categories from email first
-      await prisma.email.update({
-        where: { id: email.id },
-        data: { categories: { set: [] } }
-      });
-      // Apply all rules with all condition types
-      for (const rule of rules) {
-        if (!email[rule.field] || !rule.value) continue;
-        let isMatch = false;
-        const fieldValue = email[rule.field];
-        switch (rule.conditionType) {
-          case 'contains':
-            isMatch = fieldValue.includes(rule.value);
-            break;
-          case 'equals':
-            isMatch = fieldValue === rule.value;
-            break;
-          case 'startsWith':
-            isMatch = fieldValue.startsWith(rule.value);
-            break;
-          case 'endsWith':
-            isMatch = fieldValue.endsWith(rule.value);
-            break;
-          case 'regex':
-            try { isMatch = new RegExp(rule.value).test(fieldValue); } catch { isMatch = false; }
-            break;
-          default:
-            isMatch = false;
-        }
-        if (isMatch) {
-          await prisma.email.update({
-            where: { id: email.id },
-            data: { categories: { connect: { id: rule.categoryId } } }
-          });
-        }
-      }
-    }
+    // Rule re-application will be handled by the recategorizeAllEmails endpoint
 
     console.log('Rule created successfully and categories re-applied:', rule);
     res.status(201).json(rule);

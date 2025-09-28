@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const ruleController = require('../controllers/ruleController');
-const ensureAuth = require('../middleware/ensureAuth');
+const passport = require('passport');
 
-router.use(ensureAuth);
+// Apply authentication to all routes
+router.use(passport.authenticate('session'));
 
 router.post('/', ruleController.createRule);
 router.get('/', ruleController.getRules);

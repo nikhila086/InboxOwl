@@ -29,11 +29,11 @@ function EmailList({ emails: initialEmails, loading: initialLoading, onRefresh }
   const [error, setError] = useState(null);
 
   // Function to sync emails
-  const syncEmails = useCallback(async () => {
+  const syncEmails = useCallback(async (fullSync = false) => {
     try {
       // Prevent rapid re-syncs with improved timing
       const now = Date.now();
-      const minSyncInterval = 30000; // 30 seconds minimum between syncs
+      const minSyncInterval = fullSync ? 0 : 30000; // No delay for full sync, 30s for regular
       
       if (loading) {
         console.log('Skipping sync - already loading');
@@ -45,7 +45,7 @@ function EmailList({ emails: initialEmails, loading: initialLoading, onRefresh }
         return;
       }
       
-      console.log('Starting email sync...');
+      console.log(`Starting email sync...${fullSync ? ' (full sync)' : ''}`);
       setLoading(true);
       setError(null);
       
@@ -56,7 +56,8 @@ function EmailList({ emails: initialEmails, loading: initialLoading, onRefresh }
           'Pragma': 'no-cache',
           'If-Modified-Since': new Date(lastSyncTime).toUTCString()
         },
-        timeout: 15000 // 15 second timeout
+        params: fullSync ? { fullSync: 'true' } : {},
+        timeout: fullSync ? 30000 : 15000 // Longer timeout for full sync
       });
       
       if (response.data && Array.isArray(response.data)) {
@@ -79,26 +80,24 @@ function EmailList({ emails: initialEmails, loading: initialLoading, onRefresh }
     }
   }, [onRefresh, loading, lastSyncTime, emails]);
 
-  // Start email sync interval
+      // Start email sync interval
   useEffect(() => {
     let isSubscribed = true;
     console.log('Setting up email sync interval');
 
     // Initial sync - but only if we don't have emails already
     if (isSubscribed && (!emails || emails.length === 0)) {
-      syncEmails();
+      syncEmails(false);
     }
 
-    // Set up interval for regular syncs (every 10 minutes)
+    // Set up interval for regular syncs (every 5 minutes, less frequent)
     const interval = setInterval(() => {
       if (isSubscribed) {
         console.log('Running scheduled email sync');
-        syncEmails();
+        syncEmails(false); // Regular sync, not full
       }
-    }, 10 * 60 * 1000); // Increased to 10 minutes to reduce frequency
-    setSyncInterval(interval);
-
-    // Cleanup function
+    }, 5 * 60 * 1000); // 5 minutes to balance freshness and performance
+    setSyncInterval(interval);    // Cleanup function
     return () => {
       console.log('Cleaning up email sync interval');
       isSubscribed = false;
@@ -187,32 +186,72 @@ function EmailList({ emails: initialEmails, loading: initialLoading, onRefresh }
           <p className="mt-2 text-sm text-gray-500">
             Your inbox is empty. New emails will appear here when they arrive.
           </p>
-          <button
-            onClick={syncEmails}
-            className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Sync Emails
-          </button>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => syncEmails(false)}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Sync Emails
+            </button>
+            <button
+              onClick={() => syncEmails(true)}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Full Sync
+            </button>
+          </div>
         </div>
       ) : (
-        <motion.div
-          variants={container}
-          initial="hidden"
-          animate="show"
-          className="space-y-4"
-        >
-          {emails.map((email) => (
-            <motion.div key={email.id} variants={item}>
-              <EmailCard 
-                email={email} 
-                onClick={() => setSelectedEmail(email)}
-              />
-            </motion.div>
-          ))}
-        </motion.div>
+        <>
+          <div className="flex justify-between items-center mb-4">
+            <div className="text-sm text-gray-600">
+              {emails.length} email{emails.length !== 1 ? 's' : ''}
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => syncEmails(false)}
+                disabled={loading}
+                className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+              >
+                <svg className="mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Sync
+              </button>
+              <button
+                onClick={() => syncEmails(true)}
+                disabled={loading}
+                className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+              >
+                <svg className="mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Full Sync
+              </button>
+            </div>
+          </div>
+          <motion.div
+            variants={container}
+            initial="hidden"
+            animate="show"
+            className="space-y-4"
+          >
+            {emails.map((email) => (
+              <motion.div key={email.id} variants={item}>
+                <EmailCard 
+                  email={email} 
+                  onClick={() => setSelectedEmail(email)}
+                />
+              </motion.div>
+            ))}
+          </motion.div>
+        </>
       )}
 
       <AnimatePresence>

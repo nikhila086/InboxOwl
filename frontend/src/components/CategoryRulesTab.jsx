@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { recategorizeAllEmails } from '../utils/api';
 import { FiPlus, FiTrash2, FiSave } from 'react-icons/fi';
 import axios from 'axios';
 
@@ -139,7 +140,12 @@ const CategoryRulesTab = ({ onEmailsRefresh }) => {
       });
       
   fetchData(); // Refresh rules list
-  // Refetch emails to update category colors
+  // Trigger backend recategorization, then refetch emails to update category colors
+  try {
+    await recategorizeAllEmails();
+  } catch (err) {
+    console.error('Recategorization failed:', err);
+  }
   if (typeof onEmailsRefresh === 'function') {
     await onEmailsRefresh();
   }
@@ -156,7 +162,12 @@ const CategoryRulesTab = ({ onEmailsRefresh }) => {
       setLoading(true);
       await axios.delete(`http://localhost:3000/api/rules/${id}`);
   setRules(rules.filter(rule => rule.id !== id));
-  // Refetch emails to update category colors
+  // Trigger backend recategorization, then refetch emails to update category colors
+  try {
+    await recategorizeAllEmails();
+  } catch (err) {
+    console.error('Recategorization failed:', err);
+  }
   if (typeof onEmailsRefresh === 'function') {
     await onEmailsRefresh();
   }

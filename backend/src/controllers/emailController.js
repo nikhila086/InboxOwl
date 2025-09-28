@@ -1,3 +1,134 @@
+// Force re-analysis of all emails (useful after spam rule changes)
+exports.reanalyzeAllEmails = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = req.user.id;
+    
+    // Clear all existing analyses for fresh start
+    await prisma.emailAnalysis.deleteMany({
+      where: {
+        email: { userId }
+      }
+    });
+    
+    // Get all emails for this user
+    const emails = await prisma.email.findMany({
+      where: { userId }
+    });
+    
+    console.log(`Re-analyzing ${emails.length} emails for spam detection`);
+    
+    let analyzedCount = 0;
+    for (const email of emails) {
+      try {
+        await EmailAnalysisService.analyzeEmail({
+          subject: email.subject,
+          body: email.content,
+          emailId: email.id
+        });
+        analyzedCount++;
+      } catch (error) {
+        console.error(`Error re-analyzing email ${email.id}:`, error);
+      }
+    }
+    
+    res.json({ success: true, analyzedCount });
+  } catch (error) {
+    console.error('Error re-analyzing emails:', error);
+    res.status(500).json({ error: 'Failed to re-analyze emails' });
+  }
+};
+
+// Re-categorize all emails for a user
+exports.recategorizeAllEmails = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = req.user.id;
+    
+    // Clear all existing categories first for a clean slate
+    await prisma.email.updateMany({
+      where: { userId },
+      data: { categories: { set: [] } }
+    });
+    
+    const emails = await prisma.email.findMany({ where: { userId } });
+    let updatedCount = 0;
+    for (const email of emails) {
+      await evaluateRulesAndAssignCategories(email, userId);
+      updatedCount++;
+    }
+    res.json({ success: true, updatedCount });
+  } catch (error) {
+    console.error('Error recategorizing emails:', error);
+    res.status(500).json({ error: 'Failed to recategorize emails' });
+  }
+};
+
+// Clear all spam analysis and force refresh
+exports.clearSpamAnalysis = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = req.user.id;
+    
+    // Clear all spam analysis for this user
+    const deletedAnalyses = await prisma.emailAnalysis.deleteMany({
+      where: {
+        email: { userId }
+      }
+    });
+    
+    console.log(`Cleared ${deletedAnalyses.count} spam analyses for user ${userId}`);
+    res.json({ 
+      success: true, 
+      clearedAnalyses: deletedAnalyses.count
+    });
+  } catch (error) {
+    console.error('Error clearing spam analysis:', error);
+    res.status(500).json({ error: 'Failed to clear spam analysis' });
+  }
+};
+
+// Clean up database - remove orphaned data
+exports.cleanupDatabase = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const userId = req.user.id;
+    
+    // Remove orphaned email analyses
+    const orphanedAnalyses = await prisma.emailAnalysis.deleteMany({
+      where: {
+        email: null
+      }
+    });
+    
+    // Remove empty categories (optional)
+    const emptyCategories = await prisma.category.deleteMany({
+      where: {
+        userId,
+        emails: { none: {} },
+        rules: { none: {} }
+      }
+    });
+    
+    console.log(`Cleanup complete: ${orphanedAnalyses.count} analyses, ${emptyCategories.count} categories removed`);
+    res.json({ 
+      success: true, 
+      orphanedAnalyses: orphanedAnalyses.count,
+      emptyCategories: emptyCategories.count 
+    });
+  } catch (error) {
+    console.error('Error cleaning database:', error);
+    res.status(500).json({ error: 'Failed to cleanup database' });
+  }
+};
 const { google } = require('googleapis');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -29,9 +160,51 @@ exports.getUniqueSenders = async (req, res) => {
 };
 
 
+// Helper function to sync deleted emails
+async function syncDeletedEmails(gmail, userId) {
+  try {
+    // Get all Gmail message IDs in inbox
+    const gmailResponse = await gmail.users.messages.list({
+      userId: 'me',
+      labelIds: ['INBOX'],
+      maxResults: 500 // Check more emails for deletions
+    });
+    
+    const gmailMessageIds = (gmailResponse.data.messages || []).map(msg => msg.id);
+    
+    // Find emails in our DB that are no longer in Gmail
+    const dbEmails = await prisma.email.findMany({
+      where: { userId },
+      select: { id: true, externalId: true }
+    });
+    
+    const deletedEmails = dbEmails.filter(email => !gmailMessageIds.includes(email.externalId));
+    
+    if (deletedEmails.length > 0) {
+      console.log(`Removing ${deletedEmails.length} deleted emails from database`);
+      await prisma.email.deleteMany({
+        where: {
+          id: { in: deletedEmails.map(e => e.id) },
+          userId
+        }
+      });
+    }
+    
+    return deletedEmails.length;
+  } catch (error) {
+    console.error('Error syncing deleted emails:', error);
+    return 0;
+  }
+}
+
 // Helper function to fetch and process emails with throttling and optimization
-async function fetchAndProcessEmails(gmail, userId, maxResults = 20) {
+async function fetchAndProcessEmails(gmail, userId, maxResults = 20, syncDeleted = false) {
   console.log(`Fetching up to ${maxResults} messages from Gmail`);
+  
+  // Sync deleted emails if requested
+  if (syncDeleted) {
+    await syncDeletedEmails(gmail, userId);
+  }
   
   // Use a history ID if available to only get new messages
   let historyId = null;
@@ -111,8 +284,10 @@ async function fetchAndProcessEmails(gmail, userId, maxResults = 20) {
           const emailDetails = await getEmailDetails(gmail, message.id);
           const savedEmail = await saveEmailToDb(emailDetails, userId);
 
-          // Evaluate rules and assign categories
-          await evaluateRulesAndAssignCategories(savedEmail, userId);
+          // Only evaluate rules for truly new emails (not just content updates)
+          if (!existingIdsMap[message.id]) {
+            await evaluateRulesAndAssignCategories(savedEmail, userId);
+          }
 
           return savedEmail;
         } catch (error) {
@@ -234,18 +409,50 @@ async function evaluateRulesAndAssignCategories(email, userId) {
 
   for (const rule of rules) {
     const { field, conditionType, value } = rule;
-    let emailFieldValue = email[field];
+    let emailFieldValue;
+    
+    // Handle field mapping
+    switch (field) {
+      case 'sender':
+        emailFieldValue = email.senderEmail || email.sender;
+        break;
+      case 'subject':
+        emailFieldValue = email.subject;
+        break;
+      case 'content':
+        emailFieldValue = email.content || email.snippet;
+        break;
+      default:
+        emailFieldValue = email[field];
+    }
 
     if (!emailFieldValue) continue;
 
     // Check condition based on conditionType
     let isMatch = false;
+    const fieldValueLower = emailFieldValue.toLowerCase();
+    const valueLower = value.toLowerCase();
+    
     switch (conditionType) {
       case 'contains':
-        isMatch = emailFieldValue.includes(value);
+        isMatch = fieldValueLower.includes(valueLower);
+        break;
+      case 'equals':
+        isMatch = fieldValueLower === valueLower;
+        break;
+      case 'startsWith':
+        isMatch = fieldValueLower.startsWith(valueLower);
+        break;
+      case 'endsWith':
+        isMatch = fieldValueLower.endsWith(valueLower);
         break;
       case 'regex':
-        isMatch = new RegExp(value).test(emailFieldValue);
+        try {
+          isMatch = new RegExp(value, 'i').test(emailFieldValue);
+        } catch (e) {
+          console.warn(`Invalid regex: ${value}`);
+          isMatch = false;
+        }
         break;
       default:
         console.warn(`Unknown condition type: ${conditionType}`);
@@ -277,12 +484,13 @@ exports.getEmails = async (req, res) => {
     const gmail = getGmailClient(req.user.accessToken);
     const maxResults = parseInt(req.query.maxResults, 10) || 20;
     const categoryId = req.query.categoryId;
+    const fullSync = req.query.fullSync === 'true';
     
-    console.log('Fetching emails for user:', req.user.email);
+    console.log('Fetching emails for user:', req.user.email, fullSync ? '(full sync)' : '');
 
     try {
-      // Fetch and process new emails
-      await fetchAndProcessEmails(gmail, req.user.id, maxResults);
+      // Fetch and process new emails, with optional deleted email sync
+      await fetchAndProcessEmails(gmail, req.user.id, maxResults, fullSync);
     } catch (error) {
       console.error('Error fetching new messages:', error);
       // Continue even if Gmail fetch fails - we'll return cached emails
@@ -378,8 +586,8 @@ exports.syncEmails = async (req, res) => {
       // Continue with sync anyway
     }
     
-    // Fetch and process new emails - limit to 10 for faster sync
-    const processedEmails = await fetchAndProcessEmails(gmail, req.user.id, 10);
+    // Fetch and process new emails - limit to 10 for faster sync, include deleted email detection
+    const processedEmails = await fetchAndProcessEmails(gmail, req.user.id, 10, true);
     
     // Get all emails including the new ones
     const emails = await prisma.email.findMany({
@@ -564,6 +772,10 @@ module.exports = {
   updateRule: exports.updateRule,
   deleteRule: exports.deleteRule,
   getUniqueSenders: exports.getUniqueSenders,
+  recategorizeAllEmails: exports.recategorizeAllEmails,
+  reanalyzeAllEmails: exports.reanalyzeAllEmails,
+  clearSpamAnalysis: exports.clearSpamAnalysis,
+  cleanupDatabase: exports.cleanupDatabase,
 };
 
 console.log('Exported functions:', Object.keys(module.exports));

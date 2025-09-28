@@ -45,7 +45,8 @@ class EmailAnalysisService {
       const combinedContent = `${subject || ''} ${body || ''}`.toLowerCase();
       
       // Check if analysis already exists and it's not a forced refresh
-      if (emailId) {
+      // Skip cache if this is called during spam rule changes
+      if (emailId && !global.forceAnalysisRefresh) {
         const existingAnalysis = await prisma.emailAnalysis.findUnique({
           where: { emailId },
         });
@@ -162,18 +163,19 @@ class EmailAnalysisService {
     } catch (error) {
       console.error('Error loading spam rules:', error);
       
-      // Fallback to hardcoded keywords if database fails
+      // Fallback to minimal hardcoded keywords if database fails
+      // Note: Removed 'social' and other common words that might cause false positives
       const SPAM_KEYWORDS = [
-        'urgent', 'action required', 'account suspended', 'verify your account',
-        'click here', 'login to verify', 'unusual activity', 'suspicious activity',
-        'password expired', 'win', 'winner', 'congratulations', 'claim your prize',
-        'limited time', 'free money', 'exclusive offer', 'guaranteed'
+        'urgent action required', 'account suspended', 'verify your account immediately',
+        'click here now', 'unusual activity detected', 'password expired today',
+        'congratulations you have won', 'claim your prize now',
+        'limited time offer', 'free money guaranteed', 'exclusive offer expires'
       ];
       
       SPAM_KEYWORDS.forEach(keyword => {
         if (contentLower.includes(keyword.toLowerCase())) {
-          spamScore += 0.1; // Default score for hardcoded keywords
-          reasons.push(`Contains suspicious keyword: "${keyword}"`);
+          spamScore += 0.2; // Higher score for more specific phrases
+          reasons.push(`Contains suspicious phrase: "${keyword}"`);
         }
       });
     }
