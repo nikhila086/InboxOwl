@@ -6,6 +6,7 @@ import { FaSpinner } from 'react-icons/fa';
 import { IoDocumentTextOutline } from 'react-icons/io5';
 import { HiOutlineLightBulb } from 'react-icons/hi';
 import { getEmailFromCache, cacheEmail } from '../utils/emailCache';
+import EmailContentRenderer from './EmailContentRenderer';
 
 const EmailView = ({ email, onClose }) => {
   const [loading, setLoading] = useState(false);
@@ -204,8 +205,8 @@ const EmailView = ({ email, onClose }) => {
                   </div>
                 )}
               </div>
-              <div className="prose max-w-none whitespace-pre-wrap">
-                {email.content || emailContent?.content}
+              <div className="prose max-w-none">
+                <EmailContentRenderer content={email.content || emailContent?.content} />
               </div>
             </div>
           ) : (
