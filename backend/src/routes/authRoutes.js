@@ -40,7 +40,13 @@ router.post('/logout', (req, res) => {
 router.get('/google', (req, res, next) => {
   console.log('Starting Google OAuth...');
   passport.authenticate('google', {
-    scope: ['profile', 'email', 'https://www.googleapis.com/auth/gmail.readonly']
+    scope: [
+      'profile', 
+      'email', 
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
+      'https://www.googleapis.com/auth/gmail.modify'
+    ]
   })(req, res, next);
 });
 

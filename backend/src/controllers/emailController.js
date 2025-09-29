@@ -514,7 +514,44 @@ exports.getEmails = async (req, res) => {
     }
 
     const emails = await prisma.email.findMany(query);
-    res.json(emails);
+    
+    // Enrich emails with Gmail labels for Important/Starred functionality
+    if (req.user?.accessToken && emails.length > 0) {
+      try {
+        const gmail = getGmailClient(req.user.accessToken);
+        
+        // Fetch Gmail labels for each email
+        const enrichedEmails = await Promise.all(
+          emails.map(async (email) => {
+            try {
+              if (email.externalId) {
+                const gmailEmail = await gmail.users.messages.get({
+                  userId: 'me',
+                  id: email.externalId,
+                  format: 'minimal'
+                });
+                
+                return {
+                  ...email,
+                  labels: gmailEmail.data.labelIds || []
+                };
+              }
+              return email;
+            } catch (error) {
+              // If individual email fails, just return without labels
+              return email;
+            }
+          })
+        );
+        
+        res.json(enrichedEmails);
+      } catch (error) {
+        console.warn('Failed to enrich emails with Gmail labels:', error.message);
+        res.json(emails); // Fallback to emails without labels
+      }
+    } else {
+      res.json(emails);
+    }
 
   } catch (error) {
     console.error('Error fetching emails:', error);
@@ -763,6 +800,478 @@ async function deleteRule(req, res) {
   }
 }
 
+// Send email using Gmail API
+exports.sendEmail = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { to, subject, body } = req.body;
+    
+    if (!to || !subject) {
+      return res.status(400).json({ error: 'To and subject are required' });
+    }
+
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    // Create email content
+    const email = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      body || ''
+    ].join('\n');
+
+    // Encode email in base64url format
+    const encodedEmail = Buffer.from(email).toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // Send the email
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedEmail
+      }
+    });
+
+    console.log(`Email sent successfully: ${result.data.id}`);
+    res.json({ success: true, messageId: result.data.id });
+  } catch (error) {
+    console.error('Error sending email:', error);
+    res.status(500).json({ error: 'Failed to send email' });
+  }
+};
+
+// Get all drafts for the user
+exports.getDrafts = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    // Get list of drafts
+    const draftsResponse = await gmail.users.drafts.list({
+      userId: 'me'
+    });
+
+    if (!draftsResponse.data.drafts) {
+      return res.json({ drafts: [] });
+    }
+
+    // Get detailed information for each draft
+    const drafts = await Promise.all(
+      draftsResponse.data.drafts.map(async (draft) => {
+        const draftDetail = await gmail.users.drafts.get({
+          userId: 'me',
+          id: draft.id
+        });
+
+        const message = draftDetail.data.message;
+        const headers = message.payload?.headers || [];
+        
+        const getHeader = (name) => {
+          const header = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
+          return header ? header.value : '';
+        };
+
+        // Get body content
+        let body = '';
+        if (message.payload?.body?.data) {
+          body = Buffer.from(message.payload.body.data, 'base64').toString();
+        } else if (message.payload?.parts) {
+          const textPart = message.payload.parts.find(part => 
+            part.mimeType === 'text/plain' && part.body?.data
+          );
+          if (textPart) {
+            body = Buffer.from(textPart.body.data, 'base64').toString();
+          }
+        }
+
+        return {
+          id: draft.id,
+          messageId: message.id,
+          to: getHeader('To'),
+          subject: getHeader('Subject'),
+          body: body,
+          date: new Date(parseInt(message.internalDate || Date.now())),
+          snippet: message.snippet || ''
+        };
+      })
+    );
+
+    res.json({ drafts });
+  } catch (error) {
+    console.error('Error getting drafts:', error);
+    res.status(500).json({ error: 'Failed to get drafts' });
+  }
+};
+
+// Send email from draft
+exports.sendFromDraft = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { draftId, to, subject, body } = req.body;
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    let finalDraftId = draftId;
+    
+    // If modifications were made, create a new draft with updated content
+    if (to || subject || body) {
+      // Get original draft
+      const originalDraft = await gmail.users.drafts.get({
+        userId: 'me',
+        id: draftId
+      });
+
+      // Delete old draft
+      await gmail.users.drafts.delete({
+        userId: 'me',
+        id: draftId
+      });
+
+      // Create updated email content
+      const email = [
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        body
+      ].join('\n');
+
+      const encodedEmail = Buffer.from(email).toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      // Create new draft with updated content
+      const newDraftResult = await gmail.users.drafts.create({
+        userId: 'me',
+        requestBody: {
+          message: {
+            raw: encodedEmail
+          }
+        }
+      });
+      
+      finalDraftId = newDraftResult.data.id;
+    }
+
+    // Send the draft
+    const result = await gmail.users.drafts.send({
+      userId: 'me',
+      requestBody: {
+        id: finalDraftId
+      }
+    });
+
+    console.log(`Email sent from draft: ${result.data.id}`);
+    res.json({ success: true, messageId: result.data.id });
+  } catch (error) {
+    console.error('Error sending from draft:', error);
+    res.status(500).json({ error: 'Failed to send email from draft' });
+  }
+};
+
+// Delete draft
+exports.deleteDraft = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { draftId } = req.params;
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    await gmail.users.drafts.delete({
+      userId: 'me',
+      id: draftId
+    });
+
+    console.log(`Draft deleted: ${draftId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting draft:', error);
+    res.status(500).json({ error: 'Failed to delete draft' });
+  }
+};
+
+// Save email as draft
+exports.saveDraft = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { to, subject, body } = req.body;
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    // Create draft content
+    const email = [
+      `To: ${to || ''}`,
+      `Subject: ${subject || ''}`,
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      body || ''
+    ].join('\n');
+
+    // Encode email in base64url format
+    const encodedEmail = Buffer.from(email).toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // Create the draft
+    const result = await gmail.users.drafts.create({
+      userId: 'me',
+      requestBody: {
+        message: {
+          raw: encodedEmail
+        }
+      }
+    });
+
+    console.log(`Draft saved successfully: ${result.data.id}`);
+    res.json({ success: true, draftId: result.data.id });
+  } catch (error) {
+    console.error('Error saving draft:', error);
+    res.status(500).json({ error: 'Failed to save draft' });
+  }
+};
+
+// Get emails by folder/label
+exports.getEmailsByFolder = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { folder } = req.params; // inbox, sent, drafts, spam, trash
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    let query = '';
+    let labelIds = [];
+    
+    switch (folder.toLowerCase()) {
+      case 'inbox':
+        labelIds = ['INBOX'];
+        query = '-in:spam -in:trash';
+        break;
+      case 'primary':
+        labelIds = [];
+        query = 'category:primary';
+        break;
+      case 'important':
+        labelIds = ['IMPORTANT'];
+        query = 'is:important';
+        break;
+      case 'starred':
+        labelIds = ['STARRED'];
+        query = 'is:starred';
+        break;
+      case 'promotions':
+        labelIds = ['INBOX', 'CATEGORY_PROMOTIONS'];
+        query = 'category:promotions -in:spam -in:trash';
+        break;
+      case 'social':
+        labelIds = ['INBOX', 'CATEGORY_SOCIAL'];
+        query = 'category:social -in:spam -in:trash';
+        break;
+      case 'updates':
+        labelIds = ['INBOX', 'CATEGORY_UPDATES'];
+        query = 'category:updates -in:spam -in:trash';
+        break;
+      case 'forums':
+        labelIds = ['INBOX', 'CATEGORY_FORUMS'];
+        query = 'category:forums -in:spam -in:trash';
+        break;
+      case 'sent':
+        labelIds = ['SENT'];
+        break;
+      case 'drafts':
+        labelIds = ['DRAFT'];
+        break;
+      case 'spam':
+        labelIds = ['SPAM'];
+        break;
+      case 'trash':
+        labelIds = ['TRASH'];
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid folder' });
+    }
+
+    // Get message list
+    const messageList = await gmail.users.messages.list({
+      userId: 'me',
+      labelIds,
+      q: query,
+      maxResults: 50
+    });
+
+    if (!messageList.data.messages) {
+      return res.json([]);
+    }
+
+    // Get detailed message info
+    const emails = await Promise.all(
+      messageList.data.messages.slice(0, 20).map(async (message) => {
+        try {
+          const email = await gmail.users.messages.get({
+            userId: 'me',
+            id: message.id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'To', 'Subject', 'Date']
+          });
+
+          const headers = email.data.payload.headers;
+          const getHeader = (name) => headers.find(h => h.name === name)?.value || '';
+
+          return {
+            id: email.data.id,
+            threadId: email.data.threadId,
+            snippet: email.data.snippet,
+            subject: getHeader('Subject'),
+            sender: getHeader('From'),
+            senderEmail: getHeader('From').match(/<(.+)>/)?.[1] || getHeader('From'),
+            recipient: getHeader('To'),
+            date: new Date(parseInt(email.data.internalDate)),
+            labels: email.data.labelIds || [],
+            folder
+          };
+        } catch (error) {
+          console.error(`Error fetching email ${message.id}:`, error);
+          return null;
+        }
+      })
+    );
+
+    // Filter out any failed emails
+    const validEmails = emails.filter(email => email !== null);
+    
+    res.json(validEmails);
+  } catch (error) {
+    console.error('Error fetching emails by folder:', error);
+    res.status(500).json({ error: 'Failed to fetch emails' });
+  }
+};
+
+// Toggle important status for an email
+exports.toggleImportant = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { emailId } = req.params;
+    const { isImportant } = req.body;
+    
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    // Get current email to check its labels
+    const currentEmail = await gmail.users.messages.get({
+      userId: 'me',
+      id: emailId,
+      format: 'metadata'
+    });
+    
+    const currentLabels = currentEmail.data.labelIds || [];
+    const hasImportant = currentLabels.includes('IMPORTANT');
+    
+    // Toggle important label in Gmail
+    if (isImportant && !hasImportant) {
+      // Add important label
+      await gmail.users.messages.modify({
+        userId: 'me',
+        id: emailId,
+        requestBody: {
+          addLabelIds: ['IMPORTANT']
+        }
+      });
+    } else if (!isImportant && hasImportant) {
+      // Remove important label
+      await gmail.users.messages.modify({
+        userId: 'me',
+        id: emailId,
+        requestBody: {
+          removeLabelIds: ['IMPORTANT']
+        }
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      isImportant,
+      message: `Email ${isImportant ? 'marked as' : 'removed from'} important` 
+    });
+  } catch (error) {
+    console.error('Error toggling important status:', error);
+    res.status(500).json({ error: 'Failed to toggle important status' });
+  }
+};
+
+// Toggle starred status for an email
+exports.toggleStarred = async (req, res) => {
+  try {
+    if (!req.user?.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { emailId } = req.params;
+    const { isStarred } = req.body;
+    
+    const gmail = getGmailClient(req.user.accessToken);
+    
+    // Get current email to check its labels
+    const currentEmail = await gmail.users.messages.get({
+      userId: 'me',
+      id: emailId,
+      format: 'metadata'
+    });
+    
+    const currentLabels = currentEmail.data.labelIds || [];
+    const hasStarred = currentLabels.includes('STARRED');
+    
+    // Toggle starred label in Gmail
+    if (isStarred && !hasStarred) {
+      // Add starred label
+      await gmail.users.messages.modify({
+        userId: 'me',
+        id: emailId,
+        requestBody: {
+          addLabelIds: ['STARRED']
+        }
+      });
+    } else if (!isStarred && hasStarred) {
+      // Remove starred label
+      await gmail.users.messages.modify({
+        userId: 'me',
+        id: emailId,
+        requestBody: {
+          removeLabelIds: ['STARRED']
+        }
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      isStarred,
+      message: `Email ${isStarred ? 'starred' : 'unstarred'}` 
+    });
+  } catch (error) {
+    console.error('Error toggling starred status:', error);
+    res.status(500).json({ error: 'Failed to toggle starred status' });
+  }
+};
+
 module.exports = {
   getEmails: exports.getEmails,
   syncEmails: exports.syncEmails,
@@ -776,6 +1285,14 @@ module.exports = {
   reanalyzeAllEmails: exports.reanalyzeAllEmails,
   clearSpamAnalysis: exports.clearSpamAnalysis,
   cleanupDatabase: exports.cleanupDatabase,
+  sendEmail: exports.sendEmail,
+  saveDraft: exports.saveDraft,
+  getDrafts: exports.getDrafts,
+  sendFromDraft: exports.sendFromDraft,
+  deleteDraft: exports.deleteDraft,
+  getEmailsByFolder: exports.getEmailsByFolder,
+  toggleImportant: exports.toggleImportant,
+  toggleStarred: exports.toggleStarred,
 };
 
 console.log('Exported functions:', Object.keys(module.exports));

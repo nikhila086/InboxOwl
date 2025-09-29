@@ -52,6 +52,24 @@ router.post('/clear-spam-analysis', passport.authenticate('session'), emailContr
 // Cleanup database - remove orphaned data
 router.post('/cleanup', passport.authenticate('session'), emailController.cleanupDatabase);
 
+// Send email
+router.post('/send', passport.authenticate('session'), emailController.sendEmail);
+
+// Draft management
+router.post('/drafts', passport.authenticate('session'), emailController.saveDraft);
+router.get('/drafts', passport.authenticate('session'), emailController.getDrafts);
+router.post('/drafts/send', passport.authenticate('session'), emailController.sendFromDraft);
+router.delete('/drafts/:draftId', passport.authenticate('session'), emailController.deleteDraft);
+
+// Get emails by folder (inbox, sent, drafts, spam, trash)
+router.get('/folder/:folder', passport.authenticate('session'), emailController.getEmailsByFolder);
+
+// Toggle important status
+router.put('/important/:emailId', passport.authenticate('session'), emailController.toggleImportant);
+
+// Toggle starred status
+router.put('/starred/:emailId', passport.authenticate('session'), emailController.toggleStarred);
+
 // Rule management routes (moved to ruleRoutes.js)
 // These should be handled by /api/rules routes
 
